@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FXボード">
+<meta name="theme-color" content="#0b1424">
+<title>FX騰落ボード</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+JP:wght@400;500;700&display=swap">
+<style>
+/* レイアウト: 上部に固定ステータスバー、その下に通貨ペアごとのカード(スマホ1列/PC2-3列)、一覧表ビューに切替可 */
+:root{
+  --bg:#0b1424; --panel:#111d33; --panel-2:#16243f; --line:#22314f;
+  --fg:#e6ecf7; --muted:#8a9ab8; --accent:#f2b33d;
+  --up:#ff5468; --up-bg:rgba(255,84,104,.12);
+  --dn:#3b9dff; --dn-bg:rgba(59,157,255,.12);
+  --flat:#8a9ab8;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  --sans:"Noto Sans JP","Hiragino Sans","Yu Gothic UI",system-ui,sans-serif;
+  color-scheme:dark;
+}
+:root[data-color="green"]{ --up:#21c58b; --up-bg:rgba(33,197,139,.12); --dn:#ff5468; --dn-bg:rgba(255,84,104,.12); }
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--bg); color:var(--fg); font-family:var(--sans); font-size:14px;
+  padding-left:max(12px,env(safe-area-inset-left,0px)); padding-right:max(12px,env(safe-area-inset-right,0px));
+  padding-bottom:calc(24px + env(safe-area-inset-bottom,0px));
+  -webkit-text-size-adjust:100%;
+}
+.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
+
+/* ステータスバー */
+header{
+  position:sticky; top:0; z-index:5; background:var(--bg);
+  padding-top:calc(10px + env(safe-area-inset-top,0px)); padding-bottom:10px;
+  border-bottom:1px solid var(--line); margin-bottom:12px;
+}
+.bar{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+h1{font-size:17px; margin:0; letter-spacing:.02em; font-weight:700}
+h1 span{color:var(--accent)}
+.live{display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--muted)}
+.dot{width:8px; height:8px; border-radius:50%; background:var(--muted)}
+.live.on .dot{background:#21c58b; box-shadow:0 0 0 0 rgba(33,197,139,.6); animation:pulse 2s infinite}
+.live.err .dot{background:var(--accent)}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(33,197,139,.55)}70%{box-shadow:0 0 0 8px rgba(33,197,139,0)}100%{box-shadow:0 0 0 0 rgba(33,197,139,0)}}
+.spacer{flex:1}
+.tools{display:flex; gap:6px}
+button{
+  font:inherit; font-size:12px; color:var(--fg); background:var(--panel-2);
+  border:1px solid var(--line); border-radius:8px; padding:6px 10px; cursor:pointer;
+}
+button[aria-pressed="true"]{border-color:var(--accent); color:var(--accent)}
+button:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+.sub{font-size:11px; color:var(--muted); margin-top:6px; display:flex; gap:12px; flex-wrap:wrap}
+
+/* カード */
+#cards{display:grid; gap:12px; grid-template-columns:1fr}
+@media (min-width:760px){ #cards{grid-template-columns:1fr 1fr} }
+@media (min-width:1180px){ #cards{grid-template-columns:1fr 1fr 1fr} }
+.card{background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; min-width:0}
+.top{display:flex; align-items:flex-start; gap:10px}
+.pair{font-weight:700; font-size:16px; letter-spacing:.03em}
+.pair small{display:block; font-weight:400; font-size:11px; color:var(--muted); letter-spacing:0}
+.price{margin-left:auto; text-align:right}
+.price .v{font-size:24px; font-weight:600; line-height:1.1; transition:color .6s}
+.price .v.fu{color:var(--up)} .price .v.fd{color:var(--dn)}
+.price .arrow{font-size:14px; margin-left:4px}
+.price .ch{font-size:12px; margin-top:2px}
+.spark{display:block; width:100%; height:38px; margin:8px 0 6px}
+
+.short{display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:4px}
+.cell{background:var(--panel-2); border-radius:8px; padding:7px 6px; text-align:center; min-width:0}
+.cell .lab{font-size:10.5px; color:var(--muted); letter-spacing:.04em}
+.cell .val{font-size:15px; font-weight:600; margin-top:2px; white-space:nowrap}
+.cell .val u{font-size:10px; text-decoration:none; color:var(--muted); font-weight:400; margin-left:2px}
+
+.long{display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:6px}
+.lc{border-radius:8px; padding:7px 6px; text-align:center; border:1px solid transparent; min-width:0}
+.lc .pct{font-size:15px; font-weight:600}
+.lc .pip{font-size:11.5px; margin-top:1px; opacity:.9}
+.lc .lab{font-size:10.5px; color:var(--muted); margin-top:2px; letter-spacing:.06em}
+.up{color:var(--up)} .dn{color:var(--dn)} .fl{color:var(--flat)}
+.lc.up{background:var(--up-bg)} .lc.dn{background:var(--dn-bg)} .lc.fl{background:var(--panel-2)}
+
+/* 一覧表 */
+#tableWrap{overflow-x:auto; border:1px solid var(--line); border-radius:12px; background:var(--panel)}
+table{border-collapse:collapse; width:100%; min-width:1080px}
+th,td{padding:8px 10px; text-align:right; border-bottom:1px solid var(--line); white-space:nowrap; font-size:13px}
+th{font-size:11px; color:var(--muted); font-weight:500; background:var(--panel-2); position:sticky; top:0}
+th:first-child,td:first-child{text-align:left; position:sticky; left:0; background:var(--panel); z-index:1; font-weight:700}
+th:first-child{background:var(--panel-2); z-index:2}
+td .pp{display:block; font-size:10.5px; opacity:.85}
+tr:last-child td{border-bottom:0}
+
+.note{font-size:11px; color:var(--muted); line-height:1.7; margin-top:16px; max-width:70ch}
+.msg{padding:24px; text-align:center; color:var(--muted)}
+@media (prefers-reduced-motion:reduce){ .live.on .dot{animation:none} .price .v{transition:none} }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <h1>FX<span>騰落</span>ボード</h1>
+    <span class="live" id="live"><span class="dot"></span><span id="liveTxt">接続中…</span></span>
+    <span class="spacer"></span>
+    <div class="tools">
+      <button id="vCard" aria-pressed="true">カード</button>
+      <button id="vTable" aria-pressed="false">一覧表</button>
+      <button id="colorBtn" title="上昇色の切替">上昇=赤</button>
+      <button id="refresh" title="今すぐ更新">↻</button>
+    </div>
+  </div>
+  <div class="sub">
+    <span>現在値更新: <b class="num" id="tLive">—</b></span>
+    <span>次回更新まで <b class="num" id="countdown">—</b> 秒</span>
+    <span>基準終値(ECB)最新: <b class="num" id="tRef">—</b></span>
+  </div>
+</header>
+
+<main>
+  <div id="cards"><div class="msg">データを読み込み中…</div></div>
+  <div id="tableWrap" hidden></div>
+  <p class="note">
+    現在値: Coinbase 公開為替レート(約1分ごとに更新、30秒間隔で取得)。基準値: 欧州中央銀行(ECB)の毎営業日の参照レート(Frankfurter API経由)。<br>
+    前日・2日前・3日前は直近の営業日の基準値と比較。1W/1M/3M/6M/1Yはその日以前で最も近い営業日、YTDは前年最終営業日と比較。pipsは円ペア=0.01、その他=0.0001。<br>
+    証券会社の提示レートや終値時刻とは数pips程度ずれることがあります。売買判断は取引口座のレートで確認してください。
+  </p>
+</main>
+
+<script>
+(() => {
+  const PAIRS = [
+    ["USD","JPY","米ドル/円"],["EUR","USD","ユーロ/米ドル"],["AUD","JPY","豪ドル/円"],["GBP","JPY","ポンド/円"],
+    ["EUR","JPY","ユーロ/円"],["AUD","USD","豪ドル/米ドル"],["GBP","USD","ポンド/米ドル"],["EUR","GBP","ユーロ/ポンド"]
+  ];
+  const LONG = [["1W","1W"],["1M","1M"],["3M","3M"],["6M","6M"],["YTD","YTD"],["1Y","1Y"]];
+  const LIVE_SEC = 30, HIST_MIN = 30;
+
+  const $ = id => document.getElementById(id);
+  const store = {
+    get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } },
+    set(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
+  };
+
+  let hist = null;      // [{date:'YYYY-MM-DD', r:{USD,JPY,GBP,AUD,EUR:1}}] 昇順 (EUR基準)
+  let live = null;      // {USD:1,JPY,EUR,GBP,AUD} (USD基準)
+  let liveAt = null, prevPrice = {}, view = store.get("fx.view") || "card", countdown = LIVE_SEC;
+
+  /* ---------- 日付ユーティリティ ---------- */
+  const iso = d => d.toISOString().slice(0,10);
+  const addDays = (s,n) => { const d = new Date(s+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+n); return iso(d); };
+  const addMonths = (s,n) => {
+    const d = new Date(s+"T00:00:00Z"), day = d.getUTCDate();
+    d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth()+n);
+    const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth()+1, 0)).getUTCDate();
+    d.setUTCDate(Math.min(day,last)); return iso(d);
+  };
+  function anchorDay(){ // 現在の取引日(UTC)。土日なら直前の金曜
+    const d = new Date(); let s = iso(d);
+    while ([0,6].includes(new Date(s+"T00:00:00Z").getUTCDay())) s = addDays(s,-1);
+    return s;
+  }
+  const onOrBefore = s => { for (let i = hist.length-1; i >= 0; i--) if (hist[i].date <= s) return hist[i]; return null; };
+
+  /* ---------- 価格計算 ---------- */
+  const crossE = (r,b,q) => (q==="EUR"?1:r[q]) / (b==="EUR"?1:r[b]);   // EUR基準から
+  const crossU = (r,b,q) => (q==="USD"?1:r[q]) / (b==="USD"?1:r[b]);   // USD基準から
+  const pipOf = q => q === "JPY" ? 0.01 : 0.0001;
+  const digits = q => q === "JPY" ? 3 : 5;
+
+  function compute(){
+    let anchor, current = {}, refBase;
+    if (live) {
+      anchor = anchorDay();
+      refBase = hist.filter(h => h.date < anchor);
+      if (!refBase.length) refBase = hist.slice(0,-1);
+      for (const [b,q] of PAIRS) current[b+q] = crossU(live,b,q);
+    } else {
+      const last = hist[hist.length-1];
+      anchor = last.date; refBase = hist.slice(0,-1);
+      for (const [b,q] of PAIRS) current[b+q] = crossE(last.r,b,q);
+    }
+    const n = refBase.length;
+    const ref = {
+      d1: refBase[n-1], d2: refBase[n-2], d3: refBase[n-3],
+      "1W": onOrBefore(addDays(anchor,-7)),
+      "1M": onOrBefore(addMonths(anchor,-1)),
+      "3M": onOrBefore(addMonths(anchor,-3)),
+      "6M": onOrBefore(addMonths(anchor,-6)),
+      "YTD": onOrBefore((+anchor.slice(0,4)-1)+"-12-31"),
+      "1Y": onOrBefore(addMonths(anchor,-12)),
+    };
+    return PAIRS.map(([b,q,jp]) => {
+      const key = b+q, p = current[key], pip = pipOf(q), out = {b,q,jp,key,price:p,pip};
+      for (const [k,h] of Object.entries(ref)) {
+        if (!h) { out[k] = null; continue; }
+        const rp = crossE(h.r,b,q);
+        out[k] = { pips:(p-rp)/pip, pct:(p/rp-1)*100, ref:rp, date:h.date };
+      }
+      out.spark = hist.slice(-66).map(h => crossE(h.r,b,q));
+      if (live) out.spark.push(p);
+      return out;
+    });
+  }
+
+  /* ---------- 表示 ---------- */
+  const cls = v => v == null || Math.abs(v) < 1e-9 ? "fl" : v > 0 ? "up" : "dn";
+  const sg = (v,d) => (v > 0 ? "+" : v < 0 ? "−" : "±") + Math.abs(v).toFixed(d);
+  const fmtPips = x => x ? sg(x.pips,1) : "—";
+  const fmtPct  = x => x ? sg(x.pct,2)+"%" : "—";
+  const tip = x => x ? `基準 ${x.date}` : "";
+
+  function sparkSVG(vals){
+    const w = 300, h = 38, pad = 3;
+    const mn = Math.min(...vals), mx = Math.max(...vals), rg = (mx-mn) || 1;
+    const pts = vals.map((v,i) => [pad + i*(w-2*pad)/(vals.length-1), pad + (1-(v-mn)/rg)*(h-2*pad)]);
+    const d = pts.map((p,i) => (i?"L":"M")+p[0].toFixed(1)+" "+p[1].toFixed(1)).join("");
+    const last = pts[pts.length-1], up = vals[vals.length-1] >= vals[0];
+    const col = up ? "var(--up)" : "var(--dn)";
+    return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-label="約3か月の推移">
+      <path d="${d} L${last[0].toFixed(1)} ${h} L${pad} ${h} Z" fill="${col}" fill-opacity=".10"/>
+      <path d="${d}" fill="none" stroke="${col}" stroke-width="1.4" vector-effect="non-scaling-stroke"/>
+      <circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="2.6" fill="${col}"/></svg>`;
+  }
+
+  function renderCards(rows){
+    $("cards").innerHTML = rows.map(r => {
+      const prev = prevPrice[r.key];
+      const flash = prev == null || r.price === prev ? "" : r.price > prev ? "fu" : "fd";
+      const arrow = flash === "fu" ? "↑" : flash === "fd" ? "↓" : "";
+      return `<article class="card">
+        <div class="top">
+          <div class="pair">${r.b}/${r.q}<small>${r.jp}</small></div>
+          <div class="price">
+            <div class="v num ${flash}">${r.price.toFixed(digits(r.q))}<span class="arrow">${arrow}</span></div>
+            <div class="ch num ${cls(r.d1&&r.d1.pct)}">前日比 ${fmtPips(r.d1)} pips (${fmtPct(r.d1)})</div>
+          </div>
+        </div>
+        ${sparkSVG(r.spark)}
+        <div class="short">
+          <div class="cell" title="${tip(r.d1)}"><div class="lab">前日差</div><div class="val num ${cls(r.d1&&r.d1.pips)}">${fmtPips(r.d1)}<u>p</u></div></div>
+          <div class="cell" title="${tip(r.d1)}"><div class="lab">前日比</div><div class="val num ${cls(r.d1&&r.d1.pct)}">${fmtPct(r.d1)}</div></div>
+          <div class="cell" title="${tip(r.d2)}"><div class="lab">2日前差</div><div class="val num ${cls(r.d2&&r.d2.pips)}">${fmtPips(r.d2)}<u>p</u></div></div>
+          <div class="cell" title="${tip(r.d3)}"><div class="lab">3日前差</div><div class="val num ${cls(r.d3&&r.d3.pips)}">${fmtPips(r.d3)}<u>p</u></div></div>
+        </div>
+        <div class="long">
+          ${LONG.map(([k,lab]) => { const x = r[k]; return `<div class="lc ${cls(x&&x.pct)}" title="${tip(x)}">
+            <div class="pct num">${fmtPct(x)}</div><div class="pip num">${fmtPips(x)} pips</div><div class="lab">${lab}</div></div>`; }).join("")}
+        </div>
+      </article>`;
+    }).join("");
+  }
+
+  function renderTable(rows){
+    const cols = [["d1","前日"],["d2","2日前"],["d3","3日前"],...LONG];
+    $("tableWrap").innerHTML = `<table><thead><tr><th>通貨ペア</th><th>現在値</th>${cols.map(c=>`<th>${c[1]}<br>pips / %</th>`).join("")}</tr></thead><tbody>${
+      rows.map(r => `<tr><td>${r.b}/${r.q}</td><td class="num">${r.price.toFixed(digits(r.q))}</td>${
+        cols.map(([k]) => { const x = r[k]; return `<td class="num ${cls(x&&x.pips)}" title="${tip(x)}">${fmtPips(x)}<span class="pp">${fmtPct(x)}</span></td>`; }).join("")
+      }</tr>`).join("")}</tbody></table>`;
+  }
+
+  function render(){
+    if (!hist || hist.length < 5) return;
+    const rows = compute();
+    renderCards(rows); renderTable(rows);
+    rows.forEach(r => prevPrice[r.key] = r.price);
+    $("tRef").textContent = hist[hist.length-1].date;
+  }
+
+  function setView(v){
+    view = v; store.set("fx.view", v);
+    $("cards").hidden = v !== "card"; $("tableWrap").hidden = v !== "table";
+    $("vCard").setAttribute("aria-pressed", v === "card"); $("vTable").setAttribute("aria-pressed", v === "table");
+  }
+  function setColor(c){
+    store.set("fx.color", c);
+    if (c === "green") document.documentElement.dataset.color = "green"; else delete document.documentElement.dataset.color;
+    $("colorBtn").textContent = c === "green" ? "上昇=緑" : "上昇=赤";
+  }
+
+  /* ---------- 取得 ---------- */
+  async function getJSON(url){
+    const res = await fetch(url, {cache:"no-store"});
+    if (!res.ok) throw new Error(res.status);
+    return res.json();
+  }
+  async function loadHist(){
+    const from = addMonths(iso(new Date()), -13);
+    const hosts = ["https://api.frankfurter.dev/v1/","https://api.frankfurter.app/"];
+    for (const h of hosts) {
+      try {
+        const j = await getJSON(`${h}${from}..?base=EUR&symbols=USD,JPY,GBP,AUD`);
+        hist = Object.keys(j.rates).sort().map(d => ({date:d, r:{...j.rates[d], EUR:1}}));
+        return;
+      } catch(e){}
+    }
+    throw new Error("hist");
+  }
+  async function loadLive(){
+    try {
+      const j = await getJSON("https://api.coinbase.com/v2/exchange-rates?currency=USD");
+      const r = j.data.rates, o = {USD:1};
+      for (const c of ["EUR","JPY","GBP","AUD"]) { o[c] = parseFloat(r[c]); if (!(o[c] > 0)) throw 0; }
+      live = o; liveAt = new Date();
+      $("live").className = "live on"; $("liveTxt").textContent = "LIVE";
+      $("tLive").textContent = liveAt.toLocaleTimeString("ja-JP");
+    } catch(e){
+      $("live").className = "live err";
+      $("liveTxt").textContent = live ? "再接続待ち(前回値を表示)" : "現在値取得不可・ECB終値で表示";
+    }
+  }
+
+  async function tick(){
+    countdown = LIVE_SEC;
+    await loadLive();
+    render();
+  }
+
+  async function init(){
+    setView(view); setColor(store.get("fx.color") || "red");
+    try { await loadHist(); }
+    catch(e){ $("cards").innerHTML = `<div class="msg">基準データを取得できませんでした。通信状態を確認して ↻ を押してください。</div>`; }
+    await tick();
+    setInterval(() => {
+      if (document.hidden) return;
+      countdown--; $("countdown").textContent = Math.max(countdown,0);
+      if (countdown <= 0) tick();
+    }, 1000);
+    setInterval(() => loadHist().then(render).catch(()=>{}), HIST_MIN*60*1000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) { tick(); keepAwake(); } });
+    keepAwake();
+  }
+
+  let lock = null;
+  async function keepAwake(){ // 画面を開いている間スリープしにくくする(対応端末のみ)
+    try { if ("wakeLock" in navigator && !lock) { lock = await navigator.wakeLock.request("screen"); lock.addEventListener("release", () => lock = null); } } catch(e){}
+  }
+
+  $("vCard").onclick = () => setView("card");
+  $("vTable").onclick = () => setView("table");
+  $("colorBtn").onclick = () => setColor(document.documentElement.dataset.color === "green" ? "red" : "green");
+  $("refresh").onclick = async () => { if (!hist) { try { await loadHist(); } catch(e){} } tick(); };
+  init();
+})();
+</script>
+</body>
+</html>

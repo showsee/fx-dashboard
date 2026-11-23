@@ -119,7 +119,7 @@ tr:last-child td{border-bottom:0}
   <div class="sub">
     <span>現在値更新: <b class="num" id="tLive">—</b></span>
     <span>次回更新まで <b class="num" id="countdown">—</b> 秒</span>
-    <span>基準終値(ECB)最新: <b class="num" id="tRef">—</b></span>
+    <span>基準: <b class="num" id="tRef">—</b></span>
   </div>
 </header>
 
@@ -127,9 +127,9 @@ tr:last-child td{border-bottom:0}
   <div id="cards"><div class="msg">データを読み込み中…</div></div>
   <div id="tableWrap" hidden></div>
   <p class="note">
-    現在値: Coinbase 公開為替レート(約1分ごとに更新、30秒間隔で取得)。基準値: 欧州中央銀行(ECB)の毎営業日の参照レート(Frankfurter API経由)。<br>
-    前日・2日前・3日前は直近の営業日の基準値と比較。1W/1M/3M/6M/1Yはその日以前で最も近い営業日、YTDは前年最終営業日と比較。pipsは円ペア=0.01、その他=0.0001。<br>
-    証券会社の提示レートや終値時刻とは数pips程度ずれることがあります。売買判断は取引口座のレートで確認してください。
+    現在値: Coinbase 公開為替レート(約1分ごとに更新、30秒間隔で取得)。基準値: TradingViewと同じNY17時区切りの日足終値(Yahoo Financeの1時間足から算出、3時間ごとに自動更新)。取得できない場合はECB参照レートで代用。<br>
+    前日・2日前・3日前は直近3営業日の終値と比較。1W〜1YはTradingViewの期間騰落率の計算方法に合わせた終値、YTDは前年最終営業日の終値と比較。pipsは円ペア=0.01、その他=0.0001。<br>
+    データ配信元が違うため、TradingViewや証券会社の値と完全には一致しません。売買判断は取引口座のレートで確認してください。
   </p>
 </main>
 
@@ -148,7 +148,8 @@ tr:last-child td{border-bottom:0}
     set(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
   };
 
-  let hist = null;      // [{date:'YYYY-MM-DD', r:{USD,JPY,GBP,AUD,EUR:1}}] 昇順 (EUR基準)
+  let series = null;    // {USDJPY:{d:[日付], c:[NY17時終値]}, ...} 昇順(最後は進行中セッションを含むことあり)
+  let srcLabel = "", lastClose = "";
   let live = null;      // {USD:1,JPY,EUR,GBP,AUD} (USD基準)
   let liveAt = null, prevPrice = {}, view = store.get("fx.view") || "card", countdown = LIVE_SEC;
 
@@ -161,12 +162,15 @@ tr:last-child td{border-bottom:0}
     const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth()+1, 0)).getUTCDate();
     d.setUTCDate(Math.min(day,last)); return iso(d);
   };
-  function anchorDay(){ // 現在の取引日(UTC)。土日なら直前の金曜
-    const d = new Date(); let s = iso(d);
-    while ([0,6].includes(new Date(s+"T00:00:00Z").getUTCDay())) s = addDays(s,-1);
+  const nyFmt = new Intl.DateTimeFormat("en-CA",{timeZone:"America/New_York",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",hour12:false});
+  function sessionDay(){ // 現在のセッション日(TradingView同様NY17時で日付が切り替わる)。週末は次の月曜
+    const p = Object.fromEntries(nyFmt.formatToParts(new Date()).map(x => [x.type,x.value]));
+    let s = `${p.year}-${p.month}-${p.day}`;
+    if (+p.hour % 24 >= 17) s = addDays(s,1);
+    while ([0,6].includes(new Date(s+"T00:00:00Z").getUTCDay())) s = addDays(s,1);
     return s;
   }
-  const onOrBefore = s => { for (let i = hist.length-1; i >= 0; i--) if (hist[i].date <= s) return hist[i]; return null; };
+  const lastIdx = (d, s) => { for (let i = d.length-1; i >= 0; i--) if (d[i] <= s) return i; return -1; };
 
   /* ---------- 価格計算 ---------- */
   const crossE = (r,b,q) => (q==="EUR"?1:r[q]) / (b==="EUR"?1:r[b]);   // EUR基準から
@@ -175,36 +179,27 @@ tr:last-child td{border-bottom:0}
   const digits = q => q === "JPY" ? 3 : 5;
 
   function compute(){
-    let anchor, current = {}, refBase;
-    if (live) {
-      anchor = anchorDay();
-      refBase = hist.filter(h => h.date < anchor);
-      if (!refBase.length) refBase = hist.slice(0,-1);
-      for (const [b,q] of PAIRS) current[b+q] = crossU(live,b,q);
-    } else {
-      const last = hist[hist.length-1];
-      anchor = last.date; refBase = hist.slice(0,-1);
-      for (const [b,q] of PAIRS) current[b+q] = crossE(last.r,b,q);
-    }
-    const n = refBase.length;
-    const ref = {
-      d1: refBase[n-1], d2: refBase[n-2], d3: refBase[n-3],
-      "1W": onOrBefore(addDays(anchor,-7)),
-      "1M": onOrBefore(addMonths(anchor,-1)),
-      "3M": onOrBefore(addMonths(anchor,-3)),
-      "6M": onOrBefore(addMonths(anchor,-6)),
-      "YTD": onOrBefore((+anchor.slice(0,4)-1)+"-12-31"),
-      "1Y": onOrBefore(addMonths(anchor,-12)),
-    };
+    const S = sessionDay();
     return PAIRS.map(([b,q,jp]) => {
-      const key = b+q, p = current[key], pip = pipOf(q), out = {b,q,jp,key,price:p,pip};
+      const key = b+q, sr = series[key], pip = pipOf(q);
+      // 確定済みの終値(現在セッションより前)だけを基準に使う
+      let n = sr.d.length; while (n > 0 && sr.d[n-1] >= S) n--;
+      const d = sr.d.slice(0,n), c = sr.c.slice(0,n);
+      const p = live ? crossU(live,b,q) : sr.c[sr.c.length-1];
+      const out = {b,q,jp,key,price:p,pip};
+      const at = i => i >= 0 && i < n ? {date:d[i], v:c[i]} : null;
+      // TradingViewの期間騰落率に合わせ、「S−期間」以前で最後のバーの1本前の終値と比較
+      const per = s => at(lastIdx(d,s) - 1);
+      const ref = {
+        d1: at(n-1), d2: at(n-2), d3: at(n-3),
+        "1W": per(addDays(S,-7)), "1M": per(addMonths(S,-1)), "3M": per(addMonths(S,-3)),
+        "6M": per(addMonths(S,-6)), "1Y": per(addMonths(S,-12)),
+        "YTD": at(lastIdx(d,(+S.slice(0,4)-1)+"-12-31")),
+      };
       for (const [k,h] of Object.entries(ref)) {
-        if (!h) { out[k] = null; continue; }
-        const rp = crossE(h.r,b,q);
-        out[k] = { pips:(p-rp)/pip, pct:(p/rp-1)*100, ref:rp, date:h.date };
+        out[k] = h ? { pips:(p-h.v)/pip, pct:(p/h.v-1)*100, ref:h.v, date:h.date } : null;
       }
-      out.spark = hist.slice(-66).map(h => crossE(h.r,b,q));
-      if (live) out.spark.push(p);
+      out.spark = c.slice(-66).concat([p]);
       return out;
     });
   }
@@ -266,11 +261,11 @@ tr:last-child td{border-bottom:0}
   }
 
   function render(){
-    if (!hist || hist.length < 5) return;
+    if (!series) return;
     const rows = compute();
     renderCards(rows); renderTable(rows);
     rows.forEach(r => prevPrice[r.key] = r.price);
-    $("tRef").textContent = hist[hist.length-1].date;
+    $("tRef").textContent = srcLabel;
   }
 
   function setView(v){
@@ -291,12 +286,25 @@ tr:last-child td{border-bottom:0}
     return res.json();
   }
   async function loadHist(){
+    // 1) NY17時終値(GitHub Actionsが3時間ごとに更新)
+    try {
+      const j = await getJSON("data/closes.json?t=" + Date.now());
+      const ok = PAIRS.every(([b,q]) => j.pairs[b+q] && j.pairs[b+q].d.length > 270);
+      if (ok) {
+        series = j.pairs;
+        srcLabel = "NY終値 " + new Date(j.updated).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}) + "取得";
+        return;
+      }
+    } catch(e){}
+    // 2) 予備: ECB参照レート
     const from = addMonths(iso(new Date()), -13);
-    const hosts = ["https://api.frankfurter.dev/v1/","https://api.frankfurter.app/"];
-    for (const h of hosts) {
+    for (const h of ["https://api.frankfurter.dev/v1/","https://api.frankfurter.app/"]) {
       try {
         const j = await getJSON(`${h}${from}..?base=EUR&symbols=USD,JPY,GBP,AUD`);
-        hist = Object.keys(j.rates).sort().map(d => ({date:d, r:{...j.rates[d], EUR:1}}));
+        const ds = Object.keys(j.rates).sort();
+        series = {};
+        for (const [b,q] of PAIRS) series[b+q] = { d: ds, c: ds.map(d => crossE({...j.rates[d], EUR:1}, b, q)) };
+        srcLabel = "ECB参照レート(予備) " + ds[ds.length-1];
         return;
       } catch(e){}
     }
@@ -312,7 +320,7 @@ tr:last-child td{border-bottom:0}
       $("tLive").textContent = liveAt.toLocaleTimeString("ja-JP");
     } catch(e){
       $("live").className = "live err";
-      $("liveTxt").textContent = live ? "再接続待ち(前回値を表示)" : "現在値取得不可・ECB終値で表示";
+      $("liveTxt").textContent = live ? "再接続待ち(前回値を表示)" : "現在値取得不可・直近終値で表示";
     }
   }
 
@@ -323,7 +331,7 @@ tr:last-child td{border-bottom:0}
   }
 
   async function init(){
-    setView(view); setColor(store.get("fx.color") || "red");
+    setView(view); setColor(store.get("fx.color") || "green");
     try { await loadHist(); }
     catch(e){ $("cards").innerHTML = `<div class="msg">基準データを取得できませんでした。通信状態を確認して ↻ を押してください。</div>`; }
     await tick();
@@ -345,7 +353,7 @@ tr:last-child td{border-bottom:0}
   $("vCard").onclick = () => setView("card");
   $("vTable").onclick = () => setView("table");
   $("colorBtn").onclick = () => setColor(document.documentElement.dataset.color === "green" ? "red" : "green");
-  $("refresh").onclick = async () => { if (!hist) { try { await loadHist(); } catch(e){} } tick(); };
+  $("refresh").onclick = async () => { if (!series) { try { await loadHist(); } catch(e){} } tick(); };
   init();
 })();
 </script>

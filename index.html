@@ -303,6 +303,10 @@ tr:last-child td{border-bottom:0}
       const ok = PAIRS.every(([b,q]) => j.pairs[b+q] && j.pairs[b+q].d.length > 270);
       if (ok) {
         series = j.pairs;
+        // EUR/GBPはYahooの直接データよりEUR/JPY÷GBP/JPYの方がTradingViewに近いので置き換える
+        const ej = series.EURJPY, gj = series.GBPJPY, gi = new Map(gj.d.map((d,i) => [d, gj.c[i]]));
+        const ed = ej.d.filter(d => gi.has(d));
+        if (ed.length > 270) series.EURGBP = { d: ed, c: ed.map(d => ej.c[ej.d.indexOf(d)] / gi.get(d)) };
         srcLabel = "NY終値 " + new Date(j.updated).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}) + "取得";
         return;
       }

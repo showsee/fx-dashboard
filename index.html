@@ -88,9 +88,23 @@ button:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
 .up{color:var(--up)} .dn{color:var(--dn)} .fl{color:var(--flat)}
 .lc.up{background:var(--up-bg)} .lc.dn{background:var(--dn-bg)} .lc.fl{background:var(--panel-2)}
 
+/* 年初来レンジ */
+.ytd{margin-top:8px; background:var(--panel-2); border-radius:8px; padding:8px 10px}
+.yrow{display:flex; justify-content:space-between; gap:8px}
+.ycol{min-width:0}
+.ycol.right{text-align:right}
+.ycol .lab{font-size:10.5px; color:var(--muted); letter-spacing:.04em}
+.ycol .lab span{opacity:.8; margin-left:2px}
+.yv{font-size:15px; font-weight:600; margin-top:1px}
+.yd{font-size:11.5px}
+.ybar{position:relative; height:6px; border-radius:3px; margin:8px 0 4px;
+  background:linear-gradient(90deg,var(--dn),var(--line) 50%,var(--up))}
+.ybar i{position:absolute; top:-4px; width:3px; height:14px; margin-left:-1.5px; border-radius:2px; background:var(--fg)}
+.ypos{font-size:10.5px; color:var(--muted); text-align:center}
+
 /* 一覧表 */
 #tableWrap{overflow-x:auto; border:1px solid var(--line); border-radius:12px; background:var(--panel)}
-table{border-collapse:collapse; width:100%; min-width:1080px}
+table{border-collapse:collapse; width:100%; min-width:1320px}
 th,td{padding:8px 10px; text-align:right; border-bottom:1px solid var(--line); white-space:nowrap; font-size:13px}
 th{font-size:11px; color:var(--muted); font-weight:500; background:var(--panel-2); position:sticky; top:0}
 th:first-child,td:first-child{text-align:left; position:sticky; left:0; background:var(--panel); z-index:1; font-weight:700}
@@ -210,6 +224,17 @@ tr:last-child td{border-bottom:0}
       for (const [k,h] of Object.entries(ref)) {
         out[k] = h ? { pips:(p-h.v)/pip, pct:(p/h.v-1)*100, ref:h.v, date:h.date } : null;
       }
+      // 年初来高値・安値(進行中のセッションと現在値も含む)
+      const y0 = S.slice(0,4) + "-01-01", H = sr.h || sr.c, Lw = sr.l || sr.c;
+      let hi = {v:p, date:"現在"}, lo = {v:p, date:"現在"};
+      for (let i = 0; i < sr.d.length; i++) {
+        if (sr.d[i] < y0) continue;
+        if (H[i] > hi.v) hi = {v:H[i], date:sr.d[i]};
+        if (Lw[i] < lo.v) lo = {v:Lw[i], date:sr.d[i]};
+      }
+      out.yHi = {...hi, pips:(p-hi.v)/pip, pct:(p/hi.v-1)*100};
+      out.yLo = {...lo, pips:(p-lo.v)/pip, pct:(p/lo.v-1)*100};
+      out.yPos = hi.v > lo.v ? (p-lo.v)/(hi.v-lo.v)*100 : 50;
       out.spark = c.slice(-66).concat([p]);
       return out;
     });
@@ -233,6 +258,23 @@ tr:last-child td{border-bottom:0}
       <path d="${d} L${last[0].toFixed(1)} ${h} L${pad} ${h} Z" fill="${col}" fill-opacity=".10"/>
       <path d="${d}" fill="none" stroke="${col}" stroke-width="1.4" vector-effect="non-scaling-stroke"/>
       <circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="2.6" fill="${col}"/></svg>`;
+  }
+
+  const md = s => s === "現在" ? "現在" : (+s.slice(5,7)) + "/" + (+s.slice(8,10));
+  function ytdBlock(r){
+    const dg = digits(r.q), pos = Math.max(0, Math.min(100, r.yPos));
+    return `<div class="ytd">
+      <div class="yrow">
+        <div class="ycol"><div class="lab">年初来安値 <span>${md(r.yLo.date)}</span></div>
+          <div class="yv num">${r.yLo.v.toFixed(dg)}</div>
+          <div class="yd num ${cls(r.yLo.pips)}">${sg(r.yLo.pips,1)} pips</div></div>
+        <div class="ycol right"><div class="lab">年初来高値 <span>${md(r.yHi.date)}</span></div>
+          <div class="yv num">${r.yHi.v.toFixed(dg)}</div>
+          <div class="yd num ${cls(r.yHi.pips)}">${sg(r.yHi.pips,1)} pips</div></div>
+      </div>
+      <div class="ybar" title="年初来レンジ内の位置 ${pos.toFixed(0)}%"><i style="left:${pos}%"></i></div>
+      <div class="ypos num">レンジ内の位置 ${pos.toFixed(0)}%</div>
+    </div>`;
   }
 
   function renderCards(rows){
@@ -259,16 +301,18 @@ tr:last-child td{border-bottom:0}
           ${LONG.map(([k,lab]) => { const x = r[k]; return `<div class="lc ${cls(x&&x.pct)}" title="${tip(x)}">
             <div class="pct num">${fmtPct(x)}</div><div class="pip num">${fmtPips(x)} pips</div><div class="lab">${lab}</div></div>`; }).join("")}
         </div>
+        ${ytdBlock(r)}
       </article>`;
     }).join("");
   }
 
   function renderTable(rows){
     const cols = [["d1","前日"],["d2","2日前"],["d3","3日前"],...LONG];
-    $("tableWrap").innerHTML = `<table><thead><tr><th>通貨ペア</th><th>現在値</th>${cols.map(c=>`<th>${c[1]}<br>pips / %</th>`).join("")}</tr></thead><tbody>${
+    const yc = (x,dg) => `<td class="num" title="${x.date}">${x.v.toFixed(dg)}<span class="pp ${cls(x.pips)}">${md(x.date)}・${sg(x.pips,1)}p</span></td>`;
+    $("tableWrap").innerHTML = `<table><thead><tr><th>通貨ペア</th><th>現在値</th>${cols.map(c=>`<th>${c[1]}<br>pips / %</th>`).join("")}<th>年初来高値<br>日付・現在との差</th><th>年初来安値<br>日付・現在との差</th></tr></thead><tbody>${
       rows.map(r => `<tr><td>${r.b}/${r.q}</td><td class="num">${r.price.toFixed(digits(r.q))}</td>${
         cols.map(([k]) => { const x = r[k]; return `<td class="num ${cls(x&&x.pips)}" title="${tip(x)}">${fmtPips(x)}<span class="pp">${fmtPct(x)}</span></td>`; }).join("")
-      }</tr>`).join("")}</tbody></table>`;
+      }${yc(r.yHi,digits(r.q))}${yc(r.yLo,digits(r.q))}</tr>`).join("")}</tbody></table>`;
   }
 
   function render(){
@@ -306,7 +350,13 @@ tr:last-child td{border-bottom:0}
         // EUR/GBPはYahooの直接データよりEUR/JPY÷GBP/JPYの方がTradingViewに近いので置き換える
         const ej = series.EURJPY, gj = series.GBPJPY, gi = new Map(gj.d.map((d,i) => [d, gj.c[i]]));
         const ed = ej.d.filter(d => gi.has(d));
-        if (ed.length > 270) series.EURGBP = { d: ed, c: ed.map(d => ej.c[ej.d.indexOf(d)] / gi.get(d)) };
+        if (ed.length > 270) {
+          // 高値・安値は割り算では作れないのでYahooのEUR/GBPの値を使う
+          const o = series.EURGBP, oi = new Map(o.d.map((d,i) => [d,i]));
+          const pick = (arr, d, fb) => arr && oi.has(d) ? arr[oi.get(d)] : fb;
+          const c = ed.map(d => ej.c[ej.d.indexOf(d)] / gi.get(d));
+          series.EURGBP = { d: ed, c, h: ed.map((d,i) => pick(o.h,d,c[i])), l: ed.map((d,i) => pick(o.l,d,c[i])) };
+        }
         srcLabel = "NY終値 " + new Date(j.updated).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}) + "取得";
         return;
       }

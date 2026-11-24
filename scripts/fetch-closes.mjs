@@ -18,17 +18,26 @@ async function sessions(sym) {
       const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
       if (!res.ok) throw new Error(`${sym} HTTP ${res.status}`);
       const r = (await res.json()).chart.result[0];
-      const ts = r.timestamp, c = r.indicators.quote[0].close, out = {};
+      const q = r.indicators.quote[0], ts = r.timestamp, c = q.close, out = {}, hi = {}, lo = {};
       for (let k = 0; k < ts.length; k++) {
         if (c[k] == null) continue;
         const p = Object.fromEntries(fmt.formatToParts(new Date(ts[k] * 1000)).map(x => [x.type, x.value]));
         let d = `${p.year}-${p.month}-${p.day}`;
         if (+p.hour % 24 >= 17) d = nextDay(d);         // NY17時以降は翌営業日のセッション
         out[d] = c[k];                                   // 各セッションの最後の値 = 終値
+        const h = q.high[k] ?? c[k], l = q.low[k] ?? c[k];
+        hi[d] = Math.max(hi[d] ?? -Infinity, h);
+        lo[d] = Math.min(lo[d] ?? Infinity, l);
       }
       const wd = d => new Date(d + "T00:00:00Z").getUTCDay();
+      // 週末(日曜夕方の寄り付き)は月曜のセッションに含める
+      for (const d of Object.keys(out)) if (wd(d) === 0 || wd(d) === 6) {
+        let m = d; while (wd(m) === 0 || wd(m) === 6) m = nextDay(m);
+        if (hi[m] != null) { hi[m] = Math.max(hi[m], hi[d]); lo[m] = Math.min(lo[m], lo[d]); }
+      }
       const days = Object.keys(out).sort().filter(d => wd(d) >= 1 && wd(d) <= 5).slice(-420);
-      return { d: days, c: days.map(d => +out[d].toFixed(6)) };
+      const f = v => +v.toFixed(6);
+      return { d: days, c: days.map(d => f(out[d])), h: days.map(d => f(hi[d])), l: days.map(d => f(lo[d])) };
     } catch (e) { lastErr = e; await new Promise(r => setTimeout(r, 3000)); }
   }
   throw lastErr;
